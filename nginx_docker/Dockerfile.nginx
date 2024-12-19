@@ -1,0 +1,9 @@
+FROM nginx:latest
+
+RUN rm /etc/nginx/conf.d/default.conf
+
+# 暴露端口
+EXPOSE 80
+
+# 启动脚本
+CMD ["bash", "/usr/local/bin/start_services.sh"]

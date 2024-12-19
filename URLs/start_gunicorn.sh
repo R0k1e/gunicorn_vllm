@@ -59,4 +59,4 @@ export INFER_TYPE
 
 
 # 运行 gunicorn
-gunicorn -c URLs/gunicorn_conf.py -k gthread
+gunicorn -c URLs/gunicorn_conf.py -k gthread --bind 0.0.0.0:$PORT
