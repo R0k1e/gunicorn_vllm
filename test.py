@@ -12,7 +12,7 @@ import json
     
 for i in range(5):
     print(f"Request {i}")
-    url = "http://localhost:39875/infer"
+    url = "http://localhost:19645/infer"
     data = {"instances": ["hello"], "params": {}}
     result = requests.post(url, json=data, headers={"Content-Type": "application/json"})
     outputs = json.loads(result.content)

@@ -1,65 +1,138 @@
 #!/bin/bash
-sbatch_nodes=("g3005" "g3003")
-HF_MODEL_NAME="/data/public/wangshuo/LongContext/model/Qwen/Qwen2.5-72B-Instruct-AWQ"
+
+# 初始化变量
+sbatch_nodes=("g3006" "g3007")
+HF_MODEL_NAME="/data/public/wangshuo/LongContext/model/Qwen/Qwen2.5-72B-Instruct-AWQ-YARN-128k"
 INFER_TYPE="vLLM"
 PER_PROC_GPUS=2
-PORT=39875
+PORT=19645
 ENV_NAME="gunicorn"
+JOB_NAME="vllm_job"
+NGINX_CONF="./nginx_docker/nginx/nginx.conf"
+node_port=$((PORT + 1))
+CHECK_INTERVAL=10  # 检查间隔时间（秒）
+MAX_FAILURES=3     # 最大失败次数
 
+# 创建日志目录
 mkdir -p ./log
 
 # 生成 Nginx 配置文件
-NGINX_CONF="./nginx_docker/nginx.conf"
-mkdir -p ./nginx_docker
-cat >$NGINX_CONF <<EOL
-upstream backend {
-    least_conn;
+generate_nginx_conf() {
+    mkdir -p "$(dirname "$NGINX_CONF")"
+    cat >$NGINX_CONF <<EOL
+worker_processes auto;
+events {
+    use epoll;
+    multi_accept on;
+}
+http{   
+    upstream backend {
+        least_conn;
 EOL
 
-for node in "${sbatch_nodes[@]}"; do
-    echo "    server $node:$PORT max_fails=3 fail_timeout=10000s;" >>$NGINX_CONF
-done
+    for node in "${sbatch_nodes[@]}"; do
+        echo "        server $node:$node_port max_fails=3 fail_timeout=10000s;" >>$NGINX_CONF
+    done
 
-cat >>$NGINX_CONF <<EOL
-}
+    cat >>$NGINX_CONF <<EOL
+    }
 
-server {
-    listen 80;
+    server {
+        listen 80;
 
-    location /infer {
-        proxy_pass http://backend/infer;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
+        location /infer {
+            proxy_pass http://backend/infer;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+            proxy_read_timeout 300s;
+            proxy_connect_timeout 300s;
+        }
     }
 }
 EOL
 
-echo "Nginx configuration file generated at $NGINX_CONF"
+    echo "Nginx configuration file generated at $NGINX_CONF"
+}
 
-# 杀死所有之前提交的 vllm 推理任务
-squeue | grep "vllm_job" | awk '{print $1}' | xargs -n1 scancel
-
-for node in "${sbatch_nodes[@]}"; do
-    sbatch --job-name=vllm_job \
+# 提交 Slurm 任务
+submit_slurm_job() {
+    local node=$1
+    sbatch --job-name=$JOB_NAME \
         --partition=xl \
         --nodes=1 \
         --nodelist="$node" \
         --ntasks-per-node=8 \
-        --gres=gpu:2 \
+        --gres=gpu:8 \
         --cpus-per-task=8 \
         --output="./log/job_$node.log" \
-        --wrap="bash ./scripts/run_vllm.sh $HF_MODEL_NAME $INFER_TYPE $PER_PROC_GPUS $PORT $ENV_NAME"
-    echo "vLLM backend started on $node"
+        --wrap="bash ./scripts/run_vllm.sh $HF_MODEL_NAME $INFER_TYPE $PER_PROC_GPUS $node_port $ENV_NAME" &
+    echo "vLLM backend starting on $node"
+}
+
+submit_slurm_jobs() {
+    squeue | grep $JOB_NAME | awk '{print $1}' | xargs -n1 scancel
+    for node in "${sbatch_nodes[@]}"; do
+        submit_slurm_job $node
+    done
+}
+
+# 清理函数
+cleanup() {
+    echo "Cleaning up..."
+    docker rm -f nginx-lb
+    squeue | grep $JOB_NAME | awk '{print $1}' | xargs -n1 scancel
+}
+
+# 捕获退出信号以终止容器和 Slurm 任务
+trap 'cleanup' EXIT
+
+# 生成 Nginx 配置文件并提交 Slurm 任务
+generate_nginx_conf
+submit_slurm_jobs
+# bash start_docker.sh $PORT
+
+# 监控 upstream 服务器状态
+UPSTREAM_SERVERS=()
+for node in "${sbatch_nodes[@]}"; do
+    UPSTREAM_SERVERS+=("$node:$node_port")
 done
 
-docker rm -f nginx-lb
+declare -A FAILURE_COUNT
 
-# #itd
-docker run -itd -p $PORT:80 \
-    -v ./nginx_docker/nginx.conf:/etc/nginx/conf.d/default.conf \
-    -v ./scripts/start_services.sh:/usr/local/bin/start_services.sh \
-    -v ./scripts/run_vllm.sh:/usr/local/bin/run_vllm.sh \
-    -v ./log:/usr/local/bin/log \
-    --name nginx-lb nginx-lb:latest
+# 初始化失败计数
+for server in "${UPSTREAM_SERVERS[@]}"; do
+    FAILURE_COUNT[$server]=0
+done
+
+check_upstream() {
+    for server in "${UPSTREAM_SERVERS[@]}"; do
+        host=$(echo $server | cut -d':' -f1)
+        port=$(echo $server | cut -d':' -f2)
+        if nc -z -w 5 $host $port; then
+            FAILURE_COUNT[$server]=0
+            echo "Server $server is up"
+        else
+            FAILURE_COUNT[$server]=$((FAILURE_COUNT[$server] + 1))
+            echo "Server $server is down, current failure count: ${FAILURE_COUNT[$server]}"
+        fi
+
+        if [ "${FAILURE_COUNT[$server]}" -ge "$MAX_FAILURES" ]; then
+            echo "Server $server has failed $MAX_FAILURES times, restarting..."
+            node=$(echo $server | cut -d':' -f1)
+            submit_slurm_job $node
+            FAILURE_COUNT[$server]=0
+        fi
+    done
+}
+sleep 
+
+while true; do
+    echo -ne "\033[2J\033[H"
+    check_upstream
+    for ((i=CHECK_INTERVAL; i>0; i--)); do
+        echo -ne "Current time: $(date) | Sleeping for $i seconds... | Ctrl C to exit\r"
+        sleep 1
+    done
+done
