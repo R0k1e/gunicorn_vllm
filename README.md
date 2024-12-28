@@ -3,17 +3,11 @@ implement multiple vLLM backend via gunicorn to achieve load balance. No need to
 Thank [UltraEval](https://github.com/OpenBMB/UltraEval)!
 use `bash run_vllm.sh` to start on one node.
 
-use `bash run_all.sh' to start multiple node via slurm and use nginx as reverse proxy.
-You need to run `docker build . -f ./nginx_docker/Dockerfile.nginx --tag nginx-lb` befor use `bash run_all.sh'.
+use `bash run_all.sh' to start multiple slurm task with daemon.
+use `bash scripts/run_docker_daemon.sh` to initialise rootless docker and init docker. Put nginx docker tar in ./nginx_docker/nginx.tar, or directly download nginx:latest image. You must use bash. zsh is not supported
+use `bash start_docker.sh` to start nginx daemon.
 
 # requirements
-```
-module load rootless-docker/default
-#注意使用bash（不能用zsh）
-start_rootless_docker.sh
-```
-获取 nginx docker
-
 ``` bash
 gunicorn
 gevent
