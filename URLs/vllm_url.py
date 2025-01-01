@@ -1,6 +1,6 @@
 import argparse
 import os
-
+import threading
 from flask import Flask, jsonify, request
 from vllm import LLM, SamplingParams
 
@@ -48,31 +48,33 @@ print("model load finished")
 
 app = Flask(__name__)
 
+semaphore = threading.Semaphore(1)
 
 @app.route("/infer", methods=["POST"])
 def main():
-    datas = request.get_json()
-    params = datas["params"]
-    prompts = datas["instances"]
+    with semaphore:
+        datas = request.get_json()
+        params = datas["params"]
+        prompts = datas["instances"]
 
-    for key, value in params.items():
-        if key in params_dict:
-            params_dict[key] = value
+        for key, value in params.items():
+            if key in params_dict:
+                params_dict[key] = value
 
-    outputs = llm.generate(prompts, SamplingParams(**params_dict))
+        outputs = llm.generate(prompts, SamplingParams(**params_dict))
 
-    res = []
-    if "prompt_logprobs" in params and params["prompt_logprobs"] is not None:
-        for output in outputs:
-            prompt_logprobs = output.prompt_logprobs
-            logp_list = [list(d.values())[0] for d in prompt_logprobs[1:]]
-            res.append(logp_list)
-        return jsonify(res)
-    else:
-        for output in outputs:
-            generated_text = output.outputs[0].text
-            res.append(generated_text)
-        return jsonify(res)
+        res = []
+        if "prompt_logprobs" in params and params["prompt_logprobs"] is not None:
+            for output in outputs:
+                prompt_logprobs = output.prompt_logprobs
+                logp_list = [list(d.values())[0] for d in prompt_logprobs[1:]]
+                res.append(logp_list)
+            return jsonify(res)
+        else:
+            for output in outputs:
+                generated_text = output.outputs[0].text
+                res.append(generated_text)
+            return jsonify(res)
 
 
 @app.route("/test", methods=["GET"])

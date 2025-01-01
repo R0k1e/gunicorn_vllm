@@ -3,6 +3,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
 from gevent.pywsgi import WSGIServer
 import argparse
+import threading
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--model_name", type=str, help="Model name on hugginface")
@@ -34,42 +35,45 @@ params_dict = {
     "top_p": 0.95,
 }
 
+semaphore = threading.Semaphore(1)
+
 
 @app.route("/infer", methods=["POST"])
 def main():
-    datas = request.get_json()
-    params = datas["params"]
-    prompt = datas["instances"]
+    with semaphore:
+        datas = request.get_json()
+        params = datas["params"]
+        prompt = datas["instances"]
 
-    for key, value in params.items():
-        if key == "max_tokens":
-            params_dict["max_new_tokens"] = value
-        elif key in params_dict:
-            params_dict[key] = value
-    if prompt == "":
-        return jsonify({"error": "No prompt provided"}), 400
+        for key, value in params.items():
+            if key == "max_tokens":
+                params_dict["max_new_tokens"] = value
+            elif key in params_dict:
+                params_dict[key] = value
+        if prompt == "":
+            return jsonify({"error": "No prompt provided"}), 400
 
-    inputs = tokenizer(prompt, padding=True, return_tensors="pt").to(
-        device
-    )  # Prepare the input tensor
+        inputs = tokenizer(prompt, padding=True, return_tensors="pt").to(
+            device
+        )  # Prepare the input tensor
 
-    generate_ids = model.generate(
-        inputs.input_ids, attention_mask=inputs.attention_mask, **params_dict
-    )
+        generate_ids = model.generate(
+            inputs.input_ids, attention_mask=inputs.attention_mask, **params_dict
+        )
 
-    # Decoding the generated ids to text
-    generated_text = tokenizer.batch_decode(
-        generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False
-    )
-    print(prompt)
-    print("*********")
-    print(generated_text)
-    print("*********")
-    assert len(prompt) == len(generated_text)
-    for j in range(len(prompt)):
-        generated_text[j] = generated_text[j][len(prompt[j]) :]
-    print(generated_text)
-    return jsonify(generated_text)
+        # Decoding the generated ids to text
+        generated_text = tokenizer.batch_decode(
+            generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )
+        print(prompt)
+        print("*********")
+        print(generated_text)
+        print("*********")
+        assert len(prompt) == len(generated_text)
+        for j in range(len(prompt)):
+            generated_text[j] = generated_text[j][len(prompt[j]) :]
+        print(generated_text)
+        return jsonify(generated_text)
 
 
 @app.route("/test", methods=["GET"])
