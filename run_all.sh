@@ -1,20 +1,23 @@
 #!/bin/bash
 
 # 初始化变量
-sbatch_nodes=("g3005" "g3006" "g3007" "g3008")
+sbatch_nodes=("g3006" "g3005" "g3007" "g3008")
 HF_MODEL_NAME="/data/public/wangshuo/LongContext/model/Qwen/Qwen2.5-72B-Instruct-AWQ-YARN-128k"
+# HF_MODEL_NAME="/data/public/wangshuo/LongContext/model/meta-llama/Llama-3.3-70B-Instruct"
 INFER_TYPE="vLLM"
 PER_PROC_GPUS=2
-PORT=19645
+PORT=29666
 ENV_NAME="gunicorn"
 JOB_NAME="vllm_job"
 NGINX_CONF="./nginx_docker/nginx/nginx.conf"
+CHECK_INTERVAL=60 # 检查间隔时间（秒）
+MAX_FAILURES=10   # 最大失败次数
+JOB_LIFETIME=3600 # 作业寿命（秒）
+START_TIME=$(date | tr ' ' '_')
+LOG_DIR="./log/$START_TIME"
 node_port=$((PORT + 1))
-CHECK_INTERVAL=10  # 检查间隔时间（秒）
-MAX_FAILURES=6     # 最大失败次数
-
 # 创建日志目录
-mkdir -p ./log
+mkdir -p $LOG_DIR
 
 # 生成 Nginx 配置文件
 generate_nginx_conf() {
@@ -64,12 +67,12 @@ submit_slurm_job() {
         --nodes=1 \
         --nodelist="$node" \
         --ntasks-per-node=8 \
-        --gres=gpu:8 \
+        --gres=gpu:6 \
         --cpus-per-task=8 \
-        --output="./log/job_$node.log" \
+        --output="$LOG_DIR/job_$node.log" \
         --wrap="bash ./scripts/run_vllm.sh $HF_MODEL_NAME $INFER_TYPE $PER_PROC_GPUS $node_port $ENV_NAME" | awk '{print $4}')
     echo "vLLM backend starting on $node with jobid $jobid"
-    echo $jobid > "./log/jobid_$node.log"
+    echo $jobid >"$LOG_DIR/jobid_$node.log"
 }
 
 submit_slurm_jobs() {
@@ -82,7 +85,6 @@ submit_slurm_jobs() {
 # 清理函数
 cleanup() {
     echo "Cleaning up..."
-    docker rm -f nginx-lb
     squeue | grep $JOB_NAME | awk '{print $1}' | xargs -n1 scancel
 }
 
@@ -101,17 +103,19 @@ for node in "${sbatch_nodes[@]}"; do
 done
 
 declare -A FAILURE_COUNT
+declare -A SERVER_LIFETIME
 
-# 初始化失败计数
+# 初始化失败计数和服务器寿命
 for server in "${UPSTREAM_SERVERS[@]}"; do
     FAILURE_COUNT[$server]=0
+    jitter=$(shuf -i 1-60 -n 1)                                          # 生成1到60之间的随机数作为抖动
+    SERVER_LIFETIME[$server]=$((JOB_LIFETIME + jitter * CHECK_INTERVAL)) # 假设 JOB_LIFETIME 是预定义的超参数，表示每个 job 的寿命
 done
 
 check_upstream() {
     for server in "${UPSTREAM_SERVERS[@]}"; do
-        host=$(echo $server | cut -d':' -f1)
-        port=$(echo $server | cut -d':' -f2)
-        if nc -z -w 5 $host $port; then
+        # 使用 curl 检查 /test 路由
+        if curl -s --connect-timeout 10 --max-time 10 -o /dev/null -w "%{http_code}" "http://$server/test" | grep -q "200"; then
             FAILURE_COUNT[$server]=0
             echo "Server $server is up"
         else
@@ -122,12 +126,32 @@ check_upstream() {
         if [ "${FAILURE_COUNT[$server]}" -ge "$MAX_FAILURES" ]; then
             echo "Server $server has failed $MAX_FAILURES times, restarting..."
             node=$(echo $server | cut -d':' -f1)
-            if [ -f "./log/jobid_$node.log" ]; then
-                old_jobid=$(cat "./log/jobid_$node.log")
+            if [ -f "$LOG_DIR/jobid_$node.log" ]; then
+                old_jobid=$(cat "$LOG_DIR/jobid_$node.log")
                 scancel $old_jobid
+                sleep 3
             fi
             submit_slurm_job $node
             FAILURE_COUNT[$server]=0
+            jitter=$(shuf -i 1-60 -n 1)                                          # 生成1到60之间的随机数作为抖动
+            SERVER_LIFETIME[$server]=$((JOB_LIFETIME + jitter * CHECK_INTERVAL)) # 重启后刷新寿命并添加抖动
+        fi
+    done
+}
+
+restart_expired_jobs() {
+    for server in "${UPSTREAM_SERVERS[@]}"; do
+        if [ "${SERVER_LIFETIME[$server]}" -le 0 ]; then
+            echo "Server $server has reached its lifetime, restarting..."
+            node=$(echo $server | cut -d':' -f1)
+            if [ -f "$LOG_DIR/jobid_$node.log" ]; then
+                old_jobid=$(cat "$LOG_DIR/jobid_$node.log")
+                scancel $old_jobid
+                sleep 3
+            fi
+            submit_slurm_job $node
+            jitter=$(shuf -i 1-60 -n 1)                                          # 生成1到60之间的随机数作为抖动
+            SERVER_LIFETIME[$server]=$((JOB_LIFETIME + jitter * CHECK_INTERVAL)) # 重启后刷新寿命并添加抖动
         fi
     done
 }
@@ -135,7 +159,11 @@ check_upstream() {
 while true; do
     echo -ne "\033[2J\033[H"
     check_upstream
-    for ((i=CHECK_INTERVAL; i>0; i--)); do
+    restart_expired_jobs
+    for server in "${UPSTREAM_SERVERS[@]}"; do
+        SERVER_LIFETIME[$server]=$((SERVER_LIFETIME[$server] - CHECK_INTERVAL))
+    done
+    for ((i = CHECK_INTERVAL; i > 0; i--)); do
         echo -ne "$(date), Sleeping for $i seconds... \t| Ctrl C to exit\r"
         sleep 1
     done

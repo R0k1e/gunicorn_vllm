@@ -15,7 +15,12 @@ reference:https://github.com/vllm-project/vllm/blob/main/vllm/sampling_params.py
 model_name = os.environ.get("HF_MODEL_NAME")
 per_proc_gpus = int(os.environ.get("PER_PROC_GPUS"))
 
-llm = LLM(model=model_name, trust_remote_code=True, tensor_parallel_size=per_proc_gpus)
+llm = LLM(
+    model=model_name,
+    trust_remote_code=True,
+    tensor_parallel_size=per_proc_gpus,
+    enable_chunked_prefill=False,
+)
 
 # 模型的模型参数
 params_dict = {
@@ -68,6 +73,11 @@ def main():
             generated_text = output.outputs[0].text
             res.append(generated_text)
         return jsonify(res)
+
+
+@app.route("/test", methods=["GET"])
+def test():
+    return jsonify({"status": "ok"}), 200
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ llm = LLM(
     model=args.model_name,
     trust_remote_code=True,
     tensor_parallel_size=len(args.gpuid.split(",")),
+    enable_chunked_prefill=False,
 )
 
 # 模型的模型参数
@@ -72,6 +73,11 @@ def main():
             generated_text = output.outputs[0].text
             res.append(generated_text)
         return jsonify(res)
+
+
+@app.route("/test", methods=["GET"])
+def test():
+    return jsonify({"status": "ok"}), 200
 
 
 if __name__ == "__main__":

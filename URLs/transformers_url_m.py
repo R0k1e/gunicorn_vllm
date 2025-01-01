@@ -67,6 +67,11 @@ def main():
     return jsonify(generated_text)
 
 
+@app.route("/test", methods=["GET"])
+def test():
+    return jsonify({"status": "ok"}), 200
+
+
 if __name__ == "__main__":
     # Run the Flask app
     http_server = WSGIServer(("127.0.0.1", port), app)
