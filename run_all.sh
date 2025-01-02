@@ -67,7 +67,7 @@ submit_slurm_job() {
         --nodes=1 \
         --nodelist="$node" \
         --ntasks-per-node=8 \
-        --gres=gpu:6 \
+        --gres=gpu:8 \
         --cpus-per-task=8 \
         --output="$LOG_DIR/job_$node.log" \
         --wrap="bash ./scripts/run_vllm.sh $HF_MODEL_NAME $INFER_TYPE $PER_PROC_GPUS $node_port $ENV_NAME" | awk '{print $4}')
@@ -117,7 +117,8 @@ check_upstream() {
         # 使用 curl 检查 /test 路由
         if curl -s --connect-timeout 10 --max-time 10 -o /dev/null -w "%{http_code}" "http://$server/test" | grep -q "200"; then
             FAILURE_COUNT[$server]=0
-            echo "Server $server is up"
+            # echo "Server $server is up, rest lifetime: ${SERVER_LIFETIME[$server]}"
+            echo "Server $server is up}"
         else
             FAILURE_COUNT[$server]=$((FAILURE_COUNT[$server] + 1))
             echo "Server $server is down, current failure count: ${FAILURE_COUNT[$server]}"
@@ -159,7 +160,7 @@ restart_expired_jobs() {
 while true; do
     echo -ne "\033[2J\033[H"
     check_upstream
-    restart_expired_jobs
+    # restart_expired_jobs
     for server in "${UPSTREAM_SERVERS[@]}"; do
         SERVER_LIFETIME[$server]=$((SERVER_LIFETIME[$server] - CHECK_INTERVAL))
     done
