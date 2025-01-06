@@ -23,36 +23,37 @@ llm = LLM(
     enable_chunked_prefill=False,
 )
 
-# 模型的模型参数
-params_dict = {
-    "n": 1,
-    "best_of": None,
-    "presence_penalty": 0.0,
-    "frequency_penalty": 0.0,
-    "temperature": 1.0,
-    "top_p": 1.0,
-    "top_k": -1,
-    "use_beam_search": False,
-    "length_penalty": 1.0,
-    "early_stopping": False,
-    "stop": None,
-    "stop_token_ids": None,
-    "ignore_eos": False,
-    "max_tokens": 16,
-    "logprobs": None,
-    "prompt_logprobs": None,
-    "skip_special_tokens": True,
-}
-
 print("model load finished")
 
 app = Flask(__name__)
 
 semaphore = threading.Semaphore(1)
 
+
 @app.route("/infer", methods=["POST"])
 def main():
     with semaphore:
+        # 模型的模型参数
+        params_dict = {
+            "n": 1,
+            "best_of": None,
+            "presence_penalty": 0.0,
+            "frequency_penalty": 0.0,
+            "temperature": 1.0,
+            "top_p": 1.0,
+            "top_k": -1,
+            # "use_beam_search": False,
+            # "length_penalty": 1.0,
+            # "early_stopping": False,
+            "stop": None,
+            "stop_token_ids": None,
+            "ignore_eos": False,
+            "max_tokens": 16,
+            "logprobs": None,
+            "prompt_logprobs": None,
+            "skip_special_tokens": True,
+        }
+
         datas = request.get_json()
         params = datas["params"]
         prompts = datas["instances"]

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 初始化变量
-sbatch_nodes=("g3006" "g3005" "g3007" "g3008")
+sbatch_nodes=("g3005" "g3006" "g3008")
 HF_MODEL_NAME="/data/public/wangshuo/LongContext/model/Qwen/Qwen2.5-72B-Instruct-AWQ-YARN-128k"
 # HF_MODEL_NAME="/data/public/wangshuo/LongContext/model/meta-llama/Llama-3.3-70B-Instruct"
 INFER_TYPE="vLLM"
@@ -11,9 +11,8 @@ ENV_NAME="gunicorn"
 JOB_NAME="vllm_job"
 NGINX_CONF="./nginx_docker/nginx/nginx.conf"
 CHECK_INTERVAL=60 # 检查间隔时间（秒）
-MAX_FAILURES=10   # 最大失败次数
-JOB_LIFETIME=3600 # 作业寿命（秒）
-START_TIME=$(date | tr ' ' '_')
+CHECK_LOG_LENGTH=1000
+START_TIME=$(date +"%Y_%m_%d-%H:%M:%S")
 LOG_DIR="./log/$START_TIME"
 node_port=$((PORT + 1))
 # 创建日志目录
@@ -49,8 +48,8 @@ EOL
             proxy_set_header X-Real-IP \$remote_addr;
             proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto \$scheme;
-            proxy_read_timeout 600s;
-            proxy_connect_timeout 600s;
+            proxy_read_timeout 900s;
+            proxy_connect_timeout 900s;
         }
     }
 }
@@ -114,28 +113,16 @@ done
 
 check_upstream() {
     for server in "${UPSTREAM_SERVERS[@]}"; do
-        # 使用 curl 检查 /test 路由
-        if curl -s --connect-timeout 10 --max-time 10 -o /dev/null -w "%{http_code}" "http://$server/test" | grep -q "200"; then
-            FAILURE_COUNT[$server]=0
-            # echo "Server $server is up, rest lifetime: ${SERVER_LIFETIME[$server]}"
-            echo "Server $server is up}"
+        log_file="$LOG_DIR/job_$(echo $server | cut -d':' -f1).log"
+        tail -n $CHECK_LOG_LENGTH "$log_file" | grep -q "ERROR" # 检查日志最后1000行
+        if [ $? -eq 0 ]; then
+            echo "Server $srver is error: Error detected in log file $log_file. Restarting services..."
+            old_jobid=$(cat "$LOG_DIR/jobid_$node.log")
+            scancel $old_jobid
+            sleep 10
+            submit_job # 直接重启服务
         else
-            FAILURE_COUNT[$server]=$((FAILURE_COUNT[$server] + 1))
-            echo "Server $server is down, current failure count: ${FAILURE_COUNT[$server]}"
-        fi
-
-        if [ "${FAILURE_COUNT[$server]}" -ge "$MAX_FAILURES" ]; then
-            echo "Server $server has failed $MAX_FAILURES times, restarting..."
-            node=$(echo $server | cut -d':' -f1)
-            if [ -f "$LOG_DIR/jobid_$node.log" ]; then
-                old_jobid=$(cat "$LOG_DIR/jobid_$node.log")
-                scancel $old_jobid
-                sleep 3
-            fi
-            submit_slurm_job $node
-            FAILURE_COUNT[$server]=0
-            jitter=$(shuf -i 1-60 -n 1)                                          # 生成1到60之间的随机数作为抖动
-            SERVER_LIFETIME[$server]=$((JOB_LIFETIME + jitter * CHECK_INTERVAL)) # 重启后刷新寿命并添加抖动
+            echo "Server $server is up"
         fi
     done
 }

@@ -58,4 +58,4 @@ export INFER_TYPE
 
 # 运行 gunicorn
 # not set async because of gpu per device limit, too much request will cause OOM
-gunicorn -c URLs/gunicorn_conf.py --bind 0.0.0.0:$PORT --threads 2 --worker-class gthread
+gunicorn -c URLs/gunicorn_conf.py --bind 0.0.0.0:$PORT --threads 1 --worker-class gthread

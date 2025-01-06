@@ -29,17 +29,19 @@ if tokenizer.pad_token is None:
 
 print("Model and tokenizer initialized.")
 
-params_dict = {
-    "do_sample": True,
-    "temperature": 0.1,
-    "max_new_tokens": 400,
-    "top_p": 0.95,
-}
 
 semaphore = threading.Semaphore(1)
+
+
 @app.route("/infer", methods=["POST"])
 def main():
     with semaphore:
+        params_dict = {
+            "do_sample": True,
+            "temperature": 0.1,
+            "max_new_tokens": 400,
+            "top_p": 0.95,
+        }
         datas = request.get_json()
         params = datas["params"]
         prompt = datas["instances"]
