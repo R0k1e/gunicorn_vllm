@@ -3,6 +3,7 @@ import os
 import threading
 from flask import Flask, jsonify, request
 from vllm import LLM, SamplingParams
+from transformers import AutoTokenizer
 
 """
 reference:https://github.com/vllm-project/vllm/blob/main/vllm/sampling_params.py
@@ -15,7 +16,7 @@ parser.add_argument("--port", type=int, default=5002, help="the port")
 args = parser.parse_args()
 
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpuid
-
+tokenizer = AutoTokenizer.from_pretrained(args.model_name)
 llm = LLM(
     model=args.model_name,
     trust_remote_code=True,
@@ -48,7 +49,7 @@ def main():
             "stop": None,
             "stop_token_ids": None,
             "ignore_eos": False,
-            "max_tokens": 16,
+            "max_tokens": tokenizer.model_max_length,
             "logprobs": None,
             "prompt_logprobs": None,
             "skip_special_tokens": True,
@@ -62,7 +63,14 @@ def main():
             if key in params_dict:
                 params_dict[key] = value
 
-        outputs = llm.generate(prompts, SamplingParams(**params_dict))
+        messages = []
+        for prompt in prompts:
+            message = tokenizer.apply_chat_template(
+                conversation=prompt, tokenize=False, add_generation_prompt=True
+            )
+            messages.append(message)
+
+        outputs = llm.generate(messages, SamplingParams(**params_dict))
 
         res = []
         if "prompt_logprobs" in params and params["prompt_logprobs"] is not None:

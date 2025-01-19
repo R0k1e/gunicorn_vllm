@@ -38,9 +38,7 @@ def main():
     with semaphore:
         params_dict = {
             "do_sample": True,
-            "temperature": 0.1,
-            "max_new_tokens": 400,
-            "top_p": 0.95,
+            "temperature": 1,
         }
         datas = request.get_json()
         params = datas["params"]
@@ -54,7 +52,14 @@ def main():
         if prompt == "":
             return jsonify({"error": "No prompt provided"}), 400
 
-        inputs = tokenizer(prompt, padding=True, return_tensors="pt").to(
+        messages = []
+        for p in prompt:
+            message = tokenizer.apply_chat_template(
+                conversation=p, tokenize=False, add_generation_prompt=True
+            )
+            messages.append(message)
+
+        inputs = tokenizer(messages, padding=True, return_tensors="pt").to(
             device
         )  # Prepare the input tensor
         generate_ids = model.generate(
