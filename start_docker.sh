@@ -23,7 +23,7 @@ start_docker() {
         --name nginx-lb nginx-lb:latest
 
     # 输出 Docker 日志
-    docker logs -ft nginx-lb| tee ./log/nginx-lb.log
+    docker logs -ft nginx-lb
 }
 
 start_docker

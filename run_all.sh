@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 初始化变量
-sbatch_nodes=("g3005" "g3006" "g3008")
+sbatch_nodes=("g3005" "g3006" "g3007" "g3008")
 HF_MODEL_NAME="/data/public/wangshuo/LongContext/model/Qwen/Qwen2.5-72B-Instruct-AWQ-YARN-128k"
 # HF_MODEL_NAME="/data/public/wangshuo/LongContext/model/meta-llama/Llama-3.3-70B-Instruct"
 INFER_TYPE="vLLM"
@@ -28,12 +28,18 @@ events {
     multi_accept on;
 }
 http{   
+    log_format main '\$remote_addr - \$remote_user [\$time_local] "\$request" '
+                      '\$status \$body_bytes_sent "\$http_referer" '
+                      '"\$http_user_agent" "\$http_x_forwarded_for"';
+
+    access_log /usr/local/bin/log/$START_TIME/access.log main;
+    error_log /usr/local/bin/log/$START_TIME/error.log warn;
     upstream backend {
         least_conn;
 EOL
 
     for node in "${sbatch_nodes[@]}"; do
-        echo "        server $node:$node_port max_fails=3 fail_timeout=10000s;" >>$NGINX_CONF
+        echo "        server $node:$node_port max_fails=10 fail_timeout=300s;" >>$NGINX_CONF
     done
 
     cat >>$NGINX_CONF <<EOL
@@ -48,8 +54,8 @@ EOL
             proxy_set_header X-Real-IP \$remote_addr;
             proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto \$scheme;
-            proxy_read_timeout 900s;
-            proxy_connect_timeout 900s;
+            proxy_read_timeout 300s;
+            proxy_connect_timeout 300s;
         }
     }
 }
@@ -113,14 +119,15 @@ done
 
 check_upstream() {
     for server in "${UPSTREAM_SERVERS[@]}"; do
-        log_file="$LOG_DIR/job_$(echo $server | cut -d':' -f1).log"
+        node=$(echo $server | cut -d':' -f1)
+        log_file="$LOG_DIR/job_${node}.log"
         tail -n $CHECK_LOG_LENGTH "$log_file" | grep -q "ERROR" # 检查日志最后1000行
         if [ $? -eq 0 ]; then
-            echo "Server $srver is error: Error detected in log file $log_file. Restarting services..."
+            echo "Server $server is error: Error detected in log file $log_file. Restarting services..."
             old_jobid=$(cat "$LOG_DIR/jobid_$node.log")
             scancel $old_jobid
             sleep 10
-            submit_job # 直接重启服务
+            submit_slurm_job $node       
         else
             echo "Server $server is up"
         fi
