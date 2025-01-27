@@ -21,9 +21,6 @@ start_docker() {
         -v ./scripts/run_vllm.sh:/usr/local/bin/run_vllm.sh \
         -v ./log:/usr/local/bin/log \
         --name nginx-lb nginx-lb:latest
-
-    # 输出 Docker 日志
-    docker logs -ft nginx-lb
 }
 
 start_docker

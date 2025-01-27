@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # 初始化变量
-sbatch_nodes=("g3005" "g3006" "g3007" "g3008")
-HF_MODEL_NAME="/data/public/wangshuo/LongContext/model/Qwen/Qwen2.5-72B-Instruct-AWQ-YARN-128k"
-# HF_MODEL_NAME="/data/public/wangshuo/LongContext/model/meta-llama/Llama-3.3-70B-Instruct"
+sbatch_nodes=("g3004" "g3005" "g3006" "g3008")
+# HF_MODEL_NAME="/data/public/wangshuo/LongContext/model/Qwen/Qwen2.5-72B-Instruct-AWQ-YARN-128k"
+HF_MODEL_NAME="/data/public/wangshuo/LongContext/model/meta-llama/Llama-3.3-70B-Instruct"
 INFER_TYPE="vLLM"
-PER_PROC_GPUS=2
-PORT=29666
+PER_PROC_GPUS=4
+PORT=39666
 ENV_NAME="gunicorn"
 JOB_NAME="vllm_job"
 NGINX_CONF="./nginx_docker/nginx/nginx.conf"
@@ -25,7 +25,7 @@ generate_nginx_conf() {
 worker_processes auto;
 events {
     use epoll;
-    multi_accept on;
+    multi_accept off;
 }
 http{   
     log_format main '\$remote_addr - \$remote_user [\$time_local] "\$request" '
@@ -54,8 +54,8 @@ EOL
             proxy_set_header X-Real-IP \$remote_addr;
             proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto \$scheme;
-            proxy_read_timeout 300s;
-            proxy_connect_timeout 300s;
+            proxy_read_timeout 600s;
+            proxy_connect_timeout 600s;
         }
     }
 }
